@@ -19,10 +19,14 @@ int8_t canGear;
 uint8_t canMode;
 int8_t canTcuOilTemp;
 int8_t canOilTemp;
+int8_t canCoolantTemp;
 String gear;
 String mode;
 
 uint16_t baseID = 0x5F0;
+
+unsigned long lastCanMessageTime = 0;
+const unsigned long canTimeout = 1000;
 
 void setup() {
   Serial.begin(115200);
@@ -65,8 +69,6 @@ void setup() {
 }
 
 void loop() {
-  
-  display.clearDisplay();
   unsigned long currentMillis = millis();
 
   uint32_t alerts_triggered;
@@ -75,10 +77,11 @@ void loop() {
 
     twai_message_t message;
     while (twai_receive(&message, 0) == ESP_OK) {
+      lastCanMessageTime = millis();
+
       if (message.identifier == (baseID + 2)) {
         // Gear -3 is N, -2 is R, -1 is P, 0 is invalid, 1-8 are gears
         canGear = (int8_t)message.data[2];
-
         if (canGear < 1) {
           if (canGear == -3) gear = "N";
           else if (canGear == -2) gear = "R";
@@ -102,33 +105,45 @@ void loop() {
       }
 
       if (message.identifier == 0x545) {
-        canOilTemp = message.data[4];
+        canOilTemp = message.data[4] - 48;
+      }
+
+      if (message.identifier == 0x329) {
+        canCoolantTemp = (message.data[1] * 0.75) - 48;
       }
     }
-  }
 
-  display.setCursor(45, 10);
-  display.setTextSize(3);
-  if (gear == "P" || gear == "N" || gear == "R") {
+    display.clearDisplay();
     display.setCursor(50, 10);
-    display.println(gear);
-  } else if (mode == "D" || mode == "S" || mode == "M") {
-    display.print(mode);
-    display.println(gear);
+    display.setTextSize(3);
+    if (gear == "P" || gear == "N" || gear == "R") {
+      display.setCursor(55, 10);
+      display.println(gear);
+    } else if (mode == "D" || mode == "S" || mode == "M") {
+      display.print(mode);
+      display.println(gear);
+    }
+
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    display.print(canOilTemp);
+    display.println("C");
+
+    display.setCursor(0, 16);
+    display.print(canCoolantTemp);
+    display.println("C");
+
+    String tcuText = String(canTcuOilTemp) + "C";
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(tcuText, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w - 2, 0);
+    display.print(tcuText);
+    display.display();
   }
 
-  display.setTextSize(2);
-  display.setCursor(0, 0);
-  display.print(canOilTemp);
-  display.println("C");
-
-  String tcuText = String(canTcuOilTemp) + "C";
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds(tcuText, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(display.width() - w - 2, 0);
-  display.print(tcuText);
-
-  display.display();
-  display.clearDisplay();
+  if (millis() - lastCanMessageTime > canTimeout) {
+    display.clearDisplay();
+    display.display();
+  }
 }
