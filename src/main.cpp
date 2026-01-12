@@ -3,23 +3,30 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SH1106.h>
 
 #define CAN_RX_PIN MOSI
 #define CAN_TX_PIN SS
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
 #define OLED_RESET -1
 #define SCREEN_ADDRESS 0x3C
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define OLED_SDA SDA
+#define OLED_SCL SCL
+Adafruit_SH1106 display(OLED_SDA, OLED_SCL);
+
+// Screen padding
+#define PADDING_LEFT 10
+#define PADDING_TOP 4
+#define PADDING_RIGHT 10
 
 int8_t canGear;
 uint8_t canMode;
 int8_t canTcuOilTemp;
 int8_t canOilTemp;
 int8_t canCoolantTemp;
+uint8_t canClutchSlip;
+uint8_t canConverterSlip;
 String gear;
 String mode;
 
@@ -61,7 +68,7 @@ void setup() {
     return;
   }
 
-  display.begin();
+  display.begin(SH1106_SWITCHCAPVCC, 0x3C);
   display.setRotation(2);
   display.setTextColor(WHITE);
 
@@ -77,7 +84,10 @@ void loop() {
 
     twai_message_t message;
     while (twai_receive(&message, 0) == ESP_OK) {
-      lastCanMessageTime = millis();
+      // Only update timestamp for TCU messages (baseID + 2 or baseID + 5)
+      if (message.identifier == (baseID + 2) || message.identifier == (baseID + 5)) {
+        lastCanMessageTime = millis();
+      }
 
       if (message.identifier == (baseID + 2)) {
         // Gear -3 is N, -2 is R, -1 is P, 0 is invalid, 1-8 are gears
@@ -90,8 +100,12 @@ void loop() {
         } else {
           gear = String(canGear);
         }
+        // Clutch Slip % at bit offset 32 (byte 4)
+        canClutchSlip = message.data[4];
+        // Converter Slip % at bit offset 40 (byte 5)
+        canConverterSlip = message.data[5];
       }
-      
+
       // TCU Drive Mode 0=Drive, 1=Sport, 2=Manual
       if (message.identifier == (baseID + 5)) {
         canTcuOilTemp = (int8_t)message.data[2];
@@ -114,31 +128,61 @@ void loop() {
     }
 
     display.clearDisplay();
-    display.setCursor(50, 10);
-    display.setTextSize(3);
+
+    // Left side - Large gear display (size 4)
+    display.setTextSize(4);
+    int16_t gx1, gy1;
+    uint16_t gw, gh;
+    String gearText;
+
     if (gear == "P" || gear == "N" || gear == "R") {
-      display.setCursor(55, 10);
-      display.println(gear);
+      gearText = gear;
     } else if (mode == "D" || mode == "S" || mode == "M") {
-      display.print(mode);
-      display.println(gear);
+      gearText = mode + gear;
     }
 
-    display.setTextSize(2);
-    display.setCursor(0, 0);
+    display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
+    display.setCursor(PADDING_LEFT + 5, (display.height() - gh) / 2);
+    display.print(gearText);
+
+    // Right side - All values stacked vertically (size 1)
+    display.setTextSize(1);
+    int16_t x1, y1;
+    uint16_t w, h;
+    uint8_t rightX = display.width() / 2 + 10;
+    uint8_t lineHeight = 10;
+    uint8_t startY = PADDING_TOP + 4;
+
+    // Oil temp
+    display.setCursor(rightX, startY);
+    display.print("OIL: ");
     display.print(canOilTemp);
     display.println("C");
 
-    display.setCursor(0, 16);
+    // Coolant temp
+    display.setCursor(rightX, startY + lineHeight);
+    display.print("CLT: ");
     display.print(canCoolantTemp);
     display.println("C");
 
-    String tcuText = String(canTcuOilTemp) + "C";
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(tcuText, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor(display.width() - w - 2, 0);
-    display.print(tcuText);
+    // TCU temp
+    display.setCursor(rightX, startY + lineHeight * 2);
+    display.print("TCU: ");
+    display.print(canTcuOilTemp);
+    display.println("C");
+
+    // Clutch slip
+    display.setCursor(rightX, startY + lineHeight * 3);
+    display.print("CSL: ");
+    display.print(canClutchSlip);
+    display.println("%");
+
+    // Converter slip
+    display.setCursor(rightX, startY + lineHeight * 4);
+    display.print("TSL: ");
+    display.print(canConverterSlip);
+    display.println("%");
+
     display.display();
   }
 
@@ -146,4 +190,46 @@ void loop() {
     display.clearDisplay();
     display.display();
   }
+
+  // display.clearDisplay();
+
+  // // Left side - Large gear display (size 4)
+  // display.setTextSize(4);
+  // int16_t gx1, gy1;
+  // uint16_t gw, gh;
+  // String gearText = "S8";
+
+  // display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
+  // display.setCursor(PADDING_LEFT + 5, (display.height() - gh) / 2);
+  // display.print(gearText);
+
+  // // Right side - All values stacked vertically (size 1)
+  // display.setTextSize(1);
+  // int16_t x1, y1;
+  // uint16_t w, h;
+  // uint8_t rightX = display.width() / 2 + 10;
+  // uint8_t lineHeight = 10;
+  // uint8_t startY = PADDING_TOP + 4;
+
+  // // Oil temp
+  // display.setCursor(rightX, startY);
+  // display.print("OIL: 90C");
+
+  // // Coolant temp
+  // display.setCursor(rightX, startY + lineHeight);
+  // display.print("CLT: 99C");
+
+  // // TCU temp
+  // display.setCursor(rightX, startY + lineHeight * 2);
+  // display.print("TCU: 88C");
+
+  // // Clutch slip
+  // display.setCursor(rightX, startY + lineHeight * 3);
+  // display.print("CSL: 215%");
+
+  // // Converter slip
+  // display.setCursor(rightX, startY + lineHeight * 4);
+  // display.print("TSL: 115%");
+
+  // display.display();
 }
