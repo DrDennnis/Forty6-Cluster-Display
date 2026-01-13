@@ -5,30 +5,45 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH1106.h>
 
-#define CAN_RX_PIN MOSI
-#define CAN_TX_PIN SS
-
-#define OLED_RESET -1
-#define SCREEN_ADDRESS 0x3C
+#define CAN_RX_PIN GPIO_NUM_6
+#define CAN_TX_PIN GPIO_NUM_7
 
 #define OLED_SDA SDA
 #define OLED_SCL SCL
-Adafruit_SH1106 display(OLED_SDA, OLED_SCL);
 
 // Screen padding
 #define PADDING_LEFT 10
 #define PADDING_TOP 4
 #define PADDING_RIGHT 10
 
-int8_t canGear;
-uint8_t canMode;
-int8_t canTcuOilTemp;
-int8_t canOilTemp;
-int8_t canCoolantTemp;
-String gear;
-String mode;
+// Temperature conversion constants
+#define TEMP_OFFSET 48
+#define COOLANT_TEMP_MULTIPLIER 0.75
 
-uint16_t baseID = 0x5F0;
+// Display refresh rate
+#define DISPLAY_REFRESH_MS 50
+
+// CAN message IDs
+#define CAN_BASE_ID 0x5F0
+#define CAN_ID_GEAR (CAN_BASE_ID + 2)
+#define CAN_ID_MODE (CAN_BASE_ID + 5)
+#define CAN_ID_OIL_TEMP 0x545
+#define CAN_ID_COOLANT_TEMP 0x329
+
+Adafruit_SH1106 display(OLED_SDA, OLED_SCL);
+
+const uint32_t canTimeout = 1000;
+int8_t canGear = 0;
+uint8_t canMode = 0;
+int8_t canTcuOilTemp = 0;
+int8_t canOilTemp = 0;
+int8_t canCoolantTemp = 0;
+String gear = "";
+String mode = "";
+
+uint32_t lastCanMessageTime = 0;
+uint32_t lastDisplayUpdate = 0;
+bool canActive = false;
 
 void setup() {
   Serial.begin(115200);
@@ -71,15 +86,18 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
+  uint32_t currentMillis = millis();
 
+  // Check for CAN messages
   uint32_t alerts_triggered;
   twai_read_alerts(&alerts_triggered, pdMS_TO_TICKS(1));
   if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-
     twai_message_t message;
     while (twai_receive(&message, 0) == ESP_OK) {
-      if (message.identifier == (baseID + 2)) {
+      lastCanMessageTime = currentMillis;
+      canActive = true;
+
+      if (message.identifier == CAN_ID_GEAR) {
         // Gear -3 is N, -2 is R, -1 is P, 0 is invalid, 1-8 are gears
         canGear = (int8_t)message.data[2];
         if (canGear < 1) {
@@ -93,7 +111,7 @@ void loop() {
       }
 
       // TCU Drive Mode 0=Drive, 1=Sport, 2=Manual
-      if (message.identifier == (baseID + 5)) {
+      if (message.identifier == CAN_ID_MODE) {
         canTcuOilTemp = (int8_t)message.data[2];
         canMode = message.data[3];
         switch (canMode) {
@@ -104,14 +122,26 @@ void loop() {
         }
       }
 
-      if (message.identifier == 0x545) {
-        canOilTemp = message.data[4] - 48;
+      if (message.identifier == CAN_ID_OIL_TEMP) {
+        canOilTemp = message.data[4] - TEMP_OFFSET;
       }
 
-      if (message.identifier == 0x329) {
-        canCoolantTemp = (message.data[1] * 0.75) - 48;
+      if (message.identifier == CAN_ID_COOLANT_TEMP) {
+        canCoolantTemp = (message.data[1] * COOLANT_TEMP_MULTIPLIER) - TEMP_OFFSET;
       }
     }
+  }
+
+  // Check for CAN timeout
+  if (canActive && (currentMillis - lastCanMessageTime > canTimeout)) {
+    canActive = false;
+    gear = "";
+    mode = "";
+  }
+
+  // Update display at fixed refresh rate
+  if (currentMillis - lastDisplayUpdate >= DISPLAY_REFRESH_MS) {
+    lastDisplayUpdate = currentMillis;
 
     display.clearDisplay();
 
@@ -169,57 +199,4 @@ void loop() {
 
     display.display();
   }
-
-#ifdef DEBUG_LAYOUT
-  display.clearDisplay();
-
-  // Left side - Large gear display (size 4)
-  display.setTextSize(4);
-  int16_t gx1, gy1;
-  uint16_t gw, gh;
-  // Alternate between R and S8 every second
-  String gearText = (millis() / 1000) % 2 == 0 ? "R" : "S8";
-
-  display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
-  display.setCursor((display.width() / 2 - gw) / 2 + 5, (display.height() - gh) / 2);
-  display.print(gearText);
-
-  // Right side - All values stacked vertically (size 2)
-  int16_t x1, y1;
-  uint16_t w, h;
-  uint8_t lineHeight = 16;
-  uint8_t startY = PADDING_TOP + 4;
-
-  // Oil temp
-  display.setTextSize(2);
-  String oilValue = "125";
-  display.getTextBounds(oilValue, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY);
-  display.print(oilValue);
-  display.setTextSize(1);
-  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY);
-  display.print("O");
-
-  // Coolant temp
-  display.setTextSize(2);
-  String coolantValue = "110";
-  display.getTextBounds(coolantValue, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight);
-  display.print(coolantValue);
-  display.setTextSize(1);
-  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight);
-  display.print("C");
-
-  // TCU temp
-  display.setTextSize(2);
-  String tcuValue = "88";
-  display.getTextBounds(tcuValue, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight * 2);
-  display.print(tcuValue);
-  display.setTextSize(1);
-  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight * 2);
-  display.print("T");
-
-  display.display();
-#endif
 }
