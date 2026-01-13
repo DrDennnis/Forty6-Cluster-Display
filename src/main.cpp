@@ -25,15 +25,10 @@ uint8_t canMode;
 int8_t canTcuOilTemp;
 int8_t canOilTemp;
 int8_t canCoolantTemp;
-uint8_t canClutchSlip;
-uint8_t canConverterSlip;
 String gear;
 String mode;
 
 uint16_t baseID = 0x5F0;
-
-unsigned long lastCanMessageTime = 0;
-const unsigned long canTimeout = 1000;
 
 void setup() {
   Serial.begin(115200);
@@ -84,11 +79,6 @@ void loop() {
 
     twai_message_t message;
     while (twai_receive(&message, 0) == ESP_OK) {
-      // Only update timestamp for TCU messages (baseID + 2 or baseID + 5)
-      if (message.identifier == (baseID + 2) || message.identifier == (baseID + 5)) {
-        lastCanMessageTime = millis();
-      }
-
       if (message.identifier == (baseID + 2)) {
         // Gear -3 is N, -2 is R, -1 is P, 0 is invalid, 1-8 are gears
         canGear = (int8_t)message.data[2];
@@ -100,10 +90,6 @@ void loop() {
         } else {
           gear = String(canGear);
         }
-        // Clutch Slip % at bit offset 32 (byte 4)
-        canClutchSlip = message.data[4];
-        // Converter Slip % at bit offset 40 (byte 5)
-        canConverterSlip = message.data[5];
       }
 
       // TCU Drive Mode 0=Drive, 1=Sport, 2=Manual
@@ -142,94 +128,98 @@ void loop() {
     }
 
     display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
-    display.setCursor(PADDING_LEFT + 5, (display.height() - gh) / 2);
+    display.setCursor((display.width() / 2 - gw) / 2 + 5, (display.height() - gh) / 2);
     display.print(gearText);
 
-    // Right side - All values stacked vertically (size 1)
-    display.setTextSize(1);
+    // Right side - Temperature values stacked vertically (size 2)
     int16_t x1, y1;
     uint16_t w, h;
-    uint8_t rightX = display.width() / 2 + 10;
-    uint8_t lineHeight = 10;
+    uint8_t lineHeight = 16;
     uint8_t startY = PADDING_TOP + 4;
 
     // Oil temp
-    display.setCursor(rightX, startY);
-    display.print("OIL: ");
-    display.print(canOilTemp);
-    display.println("C");
+    display.setTextSize(2);
+    String oilValue = String(canOilTemp);
+    display.getTextBounds(oilValue, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY);
+    display.print(oilValue);
+    display.setTextSize(1);
+    display.setCursor(display.width() - 6 - PADDING_RIGHT, startY);
+    display.print("O");
 
     // Coolant temp
-    display.setCursor(rightX, startY + lineHeight);
-    display.print("CLT: ");
-    display.print(canCoolantTemp);
-    display.println("C");
+    display.setTextSize(2);
+    String coolantValue = String(canCoolantTemp);
+    display.getTextBounds(coolantValue, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight);
+    display.print(coolantValue);
+    display.setTextSize(1);
+    display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight);
+    display.print("C");
 
     // TCU temp
-    display.setCursor(rightX, startY + lineHeight * 2);
-    display.print("TCU: ");
-    display.print(canTcuOilTemp);
-    display.println("C");
-
-    // Clutch slip
-    display.setCursor(rightX, startY + lineHeight * 3);
-    display.print("CSL: ");
-    display.print(canClutchSlip);
-    display.println("%");
-
-    // Converter slip
-    display.setCursor(rightX, startY + lineHeight * 4);
-    display.print("TSL: ");
-    display.print(canConverterSlip);
-    display.println("%");
+    display.setTextSize(2);
+    String tcuValue = String(canTcuOilTemp);
+    display.getTextBounds(tcuValue, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight * 2);
+    display.print(tcuValue);
+    display.setTextSize(1);
+    display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight * 2);
+    display.print("T");
 
     display.display();
   }
 
-  if (millis() - lastCanMessageTime > canTimeout) {
-    display.clearDisplay();
-    display.display();
-  }
+#ifdef DEBUG_LAYOUT
+  display.clearDisplay();
 
-  // display.clearDisplay();
+  // Left side - Large gear display (size 4)
+  display.setTextSize(4);
+  int16_t gx1, gy1;
+  uint16_t gw, gh;
+  // Alternate between R and S8 every second
+  String gearText = (millis() / 1000) % 2 == 0 ? "R" : "S8";
 
-  // // Left side - Large gear display (size 4)
-  // display.setTextSize(4);
-  // int16_t gx1, gy1;
-  // uint16_t gw, gh;
-  // String gearText = "S8";
+  display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
+  display.setCursor((display.width() / 2 - gw) / 2 + 5, (display.height() - gh) / 2);
+  display.print(gearText);
 
-  // display.getTextBounds(gearText, 0, 0, &gx1, &gy1, &gw, &gh);
-  // display.setCursor(PADDING_LEFT + 5, (display.height() - gh) / 2);
-  // display.print(gearText);
+  // Right side - All values stacked vertically (size 2)
+  int16_t x1, y1;
+  uint16_t w, h;
+  uint8_t lineHeight = 16;
+  uint8_t startY = PADDING_TOP + 4;
 
-  // // Right side - All values stacked vertically (size 1)
-  // display.setTextSize(1);
-  // int16_t x1, y1;
-  // uint16_t w, h;
-  // uint8_t rightX = display.width() / 2 + 10;
-  // uint8_t lineHeight = 10;
-  // uint8_t startY = PADDING_TOP + 4;
+  // Oil temp
+  display.setTextSize(2);
+  String oilValue = "125";
+  display.getTextBounds(oilValue, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY);
+  display.print(oilValue);
+  display.setTextSize(1);
+  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY);
+  display.print("O");
 
-  // // Oil temp
-  // display.setCursor(rightX, startY);
-  // display.print("OIL: 90C");
+  // Coolant temp
+  display.setTextSize(2);
+  String coolantValue = "110";
+  display.getTextBounds(coolantValue, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight);
+  display.print(coolantValue);
+  display.setTextSize(1);
+  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight);
+  display.print("C");
 
-  // // Coolant temp
-  // display.setCursor(rightX, startY + lineHeight);
-  // display.print("CLT: 99C");
+  // TCU temp
+  display.setTextSize(2);
+  String tcuValue = "88";
+  display.getTextBounds(tcuValue, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(display.width() - w - 8 - PADDING_RIGHT, startY + lineHeight * 2);
+  display.print(tcuValue);
+  display.setTextSize(1);
+  display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight * 2);
+  display.print("T");
 
-  // // TCU temp
-  // display.setCursor(rightX, startY + lineHeight * 2);
-  // display.print("TCU: 88C");
-
-  // // Clutch slip
-  // display.setCursor(rightX, startY + lineHeight * 3);
-  // display.print("CSL: 215%");
-
-  // // Converter slip
-  // display.setCursor(rightX, startY + lineHeight * 4);
-  // display.print("TSL: 115%");
-
-  // display.display();
+  display.display();
+#endif
 }
