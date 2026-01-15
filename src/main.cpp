@@ -21,7 +21,7 @@
 #define COOLANT_TEMP_MULTIPLIER 0.75
 
 // Display refresh rate
-#define DISPLAY_REFRESH_MS 50
+#define DISPLAY_REFRESH_MS 125
 
 // CAN message IDs
 #define CAN_BASE_ID 0x5F0
@@ -44,6 +44,19 @@ String mode = "";
 uint32_t lastCanMessageTime = 0;
 uint32_t lastDisplayUpdate = 0;
 bool canActive = false;
+
+#ifdef DEBUG_LAYOUT
+// FPS counter variables
+uint32_t frameCount = 0;
+uint32_t lastFpsUpdate = 0;
+float fps = 0.0;
+
+// Spinner variables
+const char spinnerChars[] = {'|', '/', '-', '\\'};
+uint8_t canSpinnerIndex = 0;
+uint8_t displaySpinnerIndex = 0;
+uint8_t canMessageCount = 0;
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -97,6 +110,15 @@ void loop() {
       lastCanMessageTime = currentMillis;
       canActive = true;
 
+#ifdef DEBUG_LAYOUT
+      // Advance CAN spinner every 2 messages
+      canMessageCount++;
+      if (canMessageCount >= 2) {
+        canMessageCount = 0;
+        canSpinnerIndex = (canSpinnerIndex + 1) % 4;
+      }
+#endif
+
       if (message.identifier == CAN_ID_GEAR) {
         // Gear -3 is N, -2 is R, -1 is P, 0 is invalid, 1-8 are gears
         canGear = (int8_t)message.data[2];
@@ -142,6 +164,20 @@ void loop() {
   // Update display at fixed refresh rate
   if (currentMillis - lastDisplayUpdate >= DISPLAY_REFRESH_MS) {
     lastDisplayUpdate = currentMillis;
+
+#ifdef DEBUG_LAYOUT
+    frameCount++;
+
+    // Calculate FPS every second
+    if (currentMillis - lastFpsUpdate >= 1000) {
+      fps = frameCount * 1000.0 / (currentMillis - lastFpsUpdate);
+      frameCount = 0;
+      lastFpsUpdate = currentMillis;
+    }
+
+    // Advance display spinner every frame
+    displaySpinnerIndex = (displaySpinnerIndex + 1) % 4;
+#endif
 
     display.clearDisplay();
 
@@ -196,6 +232,21 @@ void loop() {
     display.setTextSize(1);
     display.setCursor(display.width() - 6 - PADDING_RIGHT, startY + lineHeight * 2);
     display.print("T");
+
+#ifdef DEBUG_LAYOUT
+    // FPS counter and spinners in bottom left
+    display.setTextSize(1);
+    display.setCursor(PADDING_LEFT, display.height() - 8);
+    display.print(spinnerChars[displaySpinnerIndex]);
+    display.print(" ");
+    if (canActive) {
+      display.print(spinnerChars[canSpinnerIndex]);
+    } else {
+      display.print("X");
+    }
+    display.print(" ");
+    display.print(String((int)fps) + "fps");
+#endif
 
     display.display();
   }
