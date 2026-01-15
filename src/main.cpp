@@ -4,6 +4,16 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH1106.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <ElegantOTA.h>
+
+// WiFi AP settings
+const char* AP_SSID = "Forty6";
+const char* AP_PASSWORD = "12345678";
+
+AsyncWebServer server(80);
 
 #define CAN_RX_PIN GPIO_NUM_6
 #define CAN_TX_PIN GPIO_NUM_7
@@ -95,11 +105,24 @@ void setup() {
   display.setRotation(2);
   display.setTextColor(WHITE);
 
+  // Setup WiFi AP with hidden SSID
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 1);
+
+  // Setup ElegantOTA
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/update");
+  });
+  ElegantOTA.begin(&server);
+  server.begin();
+
   Serial.println("Setup complete...");
 }
 
 void loop() {
   uint32_t currentMillis = millis();
+
+  ElegantOTA.loop();
 
   // Check for CAN messages
   uint32_t alerts_triggered;
